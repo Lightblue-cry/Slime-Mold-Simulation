@@ -1,0 +1,69 @@
+"""This example uses the light sensor on your Circuit Playground, located next to the picture of
+the eye. Try shining a flashlight on your Circuit Playground, or covering the light sensor with
+your finger to see the values increase and decrease."""
+import time
+import board
+import busio
+import usb_cdc
+
+from adafruit_circuitplayground import cp
+
+serial = usb_cdc.data
+
+
+def get_tilt_direction(x, y):
+    # Determine the tilt direction based on accelerometer data
+    if abs(x) > 5.0 or abs(y) > 5.0:  # Sensitivity threshold, adjust as needed
+        if abs(x) > abs(y):
+            return 'LEFT' if x > 0 else 'RIGHT'
+        else:
+            return 'UP' if y > 0 else 'DOWN'
+    return None
+
+button_b_start_time = None
+
+
+while True:
+    print(cp.light)
+    light_intensity = cp.light
+    #outData = (str(cp.light)+"\n").encode()
+    #serial.write(outData)
+    light_data = f"L,{light_intensity}\n".encode()
+    serial.write(light_data)
+
+    x, y, z = cp.acceleration
+    print((x,y,z))
+
+    tilt_direction = get_tilt_direction(x, y)
+    if tilt_direction:  # Only send if a direction is detected
+        tilt_data = f"T,{tilt_direction}\n".encode()
+        serial.write(tilt_data)
+
+     #press button to place food
+    if cp.button_a:
+        print("food placed")
+        msg = f"Place_Food\n".encode()
+        serial.write(msg)
+        #while cp.button_a:
+            #pass  # Wait for the button to be released to avoid multiple messages
+
+    if cp.button_b:
+
+        #cp.play_file("dip.wav")
+
+        waterone_msg = "waterone\n".encode()
+        serial.write(waterone_msg)
+
+        if button_b_start_time is None:  # Start the timer
+            button_b_start_time = time.monotonic()
+            cp.play_file("dip.wav")
+    else:
+        if button_b_start_time is not None:
+            elapsed = time.monotonic() - button_b_start_time
+            if elapsed > 3:  # Check if the button was held for more than 3 seconds
+                print("Long press detected")
+                long_press_msg = "Water\n".encode()
+                serial.write(long_press_msg)
+            button_b_start_time = None  # Reset the timer
+
+    time.sleep(0.1)
