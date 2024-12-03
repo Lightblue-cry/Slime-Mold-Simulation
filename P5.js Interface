@@ -1,0 +1,406 @@
+let grid;
+let cols, rows;
+const rectSize = 2;
+let potentialGrowthEdges = []; // Potential cells for growth
+
+let port;
+let connectBtn;
+
+//let lightIntensity = 30;
+
+let speedLight;
+
+let foodSource;
+
+let placedFoodSources = []; // Array to hold the positions of placed food sources
+
+let startPoint = null;
+
+let moldImages = []; // Array to hold mold images
+let oatImage;
+
+let imageOverlay;
+let moldImageOverlay;
+
+//let growthStartTime = null;
+//let lastWateroneTime = null;
+//let fadingStarted = false;
+let lastWateroneTime = null;  // Last time a "waterone" message was received
+
+
+
+
+function preload() {
+    // Assume you have images named mold1.jpg, mold2.jpg, ..., mold5.jpg
+    const numberOfImages = 2;  // Update this number based on your actual number of images
+    for (let i = 1; i <= numberOfImages; i++) {
+        let imagePath = `mold${i}.jpg`;  // Adjust directory as necessary
+        moldImages.push(loadImage(imagePath));
+    }
+  
+  oatImage = loadImage('oat.png');
+}
+
+
+
+function setup() {
+  createCanvas(400, 400);
+  cols = width / rectSize;
+  rows = height / rectSize;
+  grid = new Array(cols).fill().map(() => new Array(rows).fill(0)); // 0: empty, 1: filled, 2: growth edge
+  imageOverlay = new Array(cols).fill().map(() => new Array(rows).fill(null));
+  moldImageOverlay = new Array(cols).fill().map(() => new Array(rows).fill(null));
+  frameRate(60);
+  
+  port = createSerial();
+  //port.open(57600);
+  
+  connectBtn = createButton("Connect to Serial");
+  connectBtn.position(20, 20);
+  // bind mousePressed to connectBtn
+  connectBtn.mousePressed(connectBtnClick);
+  
+  
+  foodSource = { x: Math.floor(cols / 2), y: Math.floor(rows / 2) };  // Centering the food source initially
+  grid[foodSource.x][foodSource.y] = 3; // Set the initial position as the food source
+}
+
+function draw() {
+  background(220);
+  let fading = shouldFade();
+
+  // Draw grid
+  for (let i = 0; i < cols; i++) {
+    for (let j = 0; j < rows; j++) {
+      if (moldImageOverlay[i][j]) { 
+        image(moldImageOverlay[i][j], i * rectSize, j * rectSize, rectSize * 10, rectSize * 10);
+      }else if (imageOverlay[i][j] && i % 2 === 0 && j % 2 === 0) {  // Draw only if the cell is an anchor (top-left of a 2x2 block)
+                let scale = 2;
+                let scaledWidth = rectSize * scale;
+                let scaledHeight = rectSize * scale;
+                image(imageOverlay[i][j], i * rectSize, j * rectSize, scaledWidth, scaledHeight);
+        console.log(`too much water at (${i}, ${j})`);
+            } else {
+      if (grid[i][j] === 1 || grid[i][j] === 2) {
+                if (fading) {
+                    // If fading is true, calculate and apply the faded color
+                    let fadeFactor = min((millis() - lastWateroneTime - 15000) / 10000, 1);
+                    fill(lerpColor(color('#FFEB3B'), color('#FFFFFF'), fadeFactor));
+                } else {
+                    // Otherwise, use the standard yellow color
+                    fill('#FFEB3B');
+                }
+            } else if (grid[i][j] === 3) {
+        fill('rgb(133,238,97)');  // Food source cell
+      } else if (grid[i][j] === 4) {
+        fill('#FFEB3B');
+      } else {
+        fill(50); // Empty cell
+      }
+      noStroke();
+      rect(i * rectSize, j * rectSize, rectSize, rectSize);
+            }
+      }
+    }
+  
+  
+  /*for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+            if (moldImageOverlay[i][j]) {
+                console.log(`Drawing mold image at (${i}, ${j})`);
+                image(moldImageOverlay[i][j], i * rectSize, j * rectSize, rectSize * 10, rectSize * 10);
+            }
+        }
+    }*/
+  
+  for (let source of placedFoodSources) {
+        //fill('#FF5722');  // Use a different color for placed food sources
+        //rect(source.x * rectSize, source.y * rectSize, rectSize, rectSize);
+    image(oatImage, source.x * rectSize, source.y * rectSize, rectSize*5, rectSize*5); // Draw the oat image at each food source location
+    }
+
+  // Randomly select and grow from potential edges
+console.log(`Current speedLight: ${speedLight}, Frame Count: ${frameCount}`);
+  
+if (frameCount % speedLight == 0){
+  if (potentialGrowthEdges.length > 0) {
+    let edgesToGrow = selectRandomEdges(potentialGrowthEdges, 2); // Select 2 random edges to grow
+        edgesToGrow.forEach(edge => {
+            if (grid[edge.x][edge.y] === 2) { // Ensure it's still a valid edge
+                grid[edge.x][edge.y] = 1; // Mark as filled
+                updateAdjacentEdges(edge.x, edge.y); // Update adjacent cells
+            }
+        });
+  }
+  
+  //inData();
+}
+  inData();
+  
+  //potentialGrowthEdges = potentialGrowthEdges.filter(edge => grid[edge.x][edge.y] === 2);
+}
+
+function fadeWhite(col, row) {
+    if (!moldImageOverlay[col][row]) { // Ensure not to fade if there's a mold image
+        let currentColor = color('#FFEB3B'); // Assuming filled and edge cells start yellow
+        let targetColor = color('#FFFFFF'); // Target color is white
+        let fadeAmount = map(millis() - lastWateroneTime, 0, 3000, 0, 1); // Map the elapsed time to a 0-1 range for lerp
+        let newColor = lerpColor(currentColor, targetColor, fadeAmount);
+        fill(newColor);
+        rect(col * rectSize, row * rectSize, rectSize, rectSize);
+    }
+}
+
+function mousePressed() {
+  if (port.opened()) {
+  let col = Math.floor(mouseX / rectSize);
+  let row = Math.floor(mouseY / rectSize);
+  
+  if (grid[col][row] === 0) {
+        grid[col][row] = 1; // Mark as filled
+        startPoint = { x: col, y: row }; // Set the starting point
+        potentialGrowthEdges = [{ x: col, y: row }]; // Initialize with the new start point
+        updateAdjacentEdges(col, row); // Add adjacent cells as potential growth edges
+        //growthStartTime = millis(); // Record the start time of growth
+        lastWateroneTime = millis(); // Also set this to prevent immediate fading
+    }
+  }
+}
+
+function shouldFade() {
+    if (!lastWateroneTime) return false; // If never set, do not fade
+    return millis() - lastWateroneTime > 3000; // Start fading if more than 3 seconds have passed since the last "waterone" message
+}
+
+
+function updateAdjacentEdges(col, row) {
+  let directions = [[0, -1], [1, 0], [0, 1], [-1, 0]]; // Adjacent cells
+  directions.forEach(([dx, dy]) => {
+    let newCol = col + dx;
+    let newRow = row + dy;
+    if (isValidCell(newCol, newRow) && grid[newCol][newRow] === 0) {
+            grid[newCol][newRow] = 2; // Mark as a growth edge
+            potentialGrowthEdges.push({ x: newCol, y: newRow });
+        }
+        // Check if this is a food source and trigger retraction if so
+        if (checkForFoodSource(newCol, newRow)) {
+            startRetraction(newCol, newRow);
+        }
+  });
+  // Filter out the current cell from edges, in case it was marked as an edge before
+  //potentialGrowthEdges = potentialGrowthEdges.filter(edge => !(edge[0] === col && edge[1] === row));
+}
+
+function checkForFoodSource(col, row) {
+    return placedFoodSources.some(source => source.x === col && source.y === row);
+}
+
+function findShortestPathToStart(endCol, endRow) {
+    let queue = [{ x: endCol, y: endRow, path: [{ x: endCol, y: endRow }] }];
+    let visited = new Set([`${endCol},${endRow}`]);
+    let shortestPath = [];
+
+    while (queue.length > 0) {
+        let current = queue.shift();
+        if (current.x === startPoint.x && current.y === startPoint.y) {
+            shortestPath = current.path;
+            break;
+        }
+
+        let directions = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+        directions.forEach(([dx, dy]) => {
+            let newX = current.x + dx;
+            let newY = current.y + dy;
+            if (isValidCell(newX, newY) && grid[newX][newY] === 1 && !visited.has(`${newX},${newY}`)) {
+                visited.add(`${newX},${newY}`);
+                queue.push({ x: newX, y: newY, path: [...current.path, { x: newX, y: newY }] });
+            }
+        });
+    }
+
+    // Mark the shortest path in the grid to avoid retraction
+    shortestPath.forEach(point => {
+        grid[point.x][point.y] = 4;  // Assuming 4 represents the shortest path
+        if (checkForFoodSource(point.x, point.y) && Math.random() < 0.3) {  // 100% chance
+            let randomMoldImage = random(moldImages);
+            moldImageOverlay[point.x][point.y] = randomMoldImage;  // Set mold image in the new overlay
+            console.log(`Mold image set at (${point.x}, ${point.y})`);
+}
+
+    });
+  
+     
+    return shortestPath;
+}
+
+function startRetraction(col, row) {
+    let path = findShortestPathToStart(col, row);
+    path.forEach(point => grid[point.x][point.y] = 4); // Mark shortest path
+    for (let i = 0; i < cols; i++) {
+        for (let j = 0; j < rows; j++) {
+            // Retract all cells that are not part of the shortest path
+            if ((grid[i][j] === 1 || grid[i][j] === 2) && !path.some(p => p.x === i && p.y === j)) {
+                fadeCell(i, j);
+            }
+        }
+    }
+}
+
+function fadeCell(col, row) {
+    let fadeAmount = 0;  // Initialize the fade amount variable for tracking the fade progress
+    let maxFade = 255;  // Set maximum value for fade corresponding to the RGB color scale
+    grid[col][row] = 'fading';  // Mark the cell as fading to prevent further growth processes
+    let fadeInterval = setInterval(() => {
+        if (fadeAmount < maxFade) {
+            fadeAmount += 5;  // Increment fade amount for a noticeable fade
+            let colorValue = 255 - fadeAmount;  // Calculate new color to fade to white
+            fill(colorValue, colorValue, colorValue);  // Apply new color
+            rect(col * rectSize, row * rectSize, rectSize, rectSize);  // Redraw the fading cell
+        } else {
+            clearInterval(fadeInterval);
+            grid[col][row] = 0;  // Set cell to empty only after fading completes
+        }
+    }, 500);  // Set interval timing for smoother transition
+}
+
+
+// Use existing validCell, updateAdjacentEdges, and other utility functions as is.
+
+
+function fadeColor(x, y) {
+    // This function would gradually change the color to simulate fading
+    let c = lerpColor(color('#FFD207'), color(220), 0.5);  // Simplified fading effect
+    fill(c);
+    rect(x * rectSize, y * rectSize, rectSize, rectSize);
+}
+
+
+function isValidCell(col, row) {
+  return col >= 0 && col < cols && row >= 0 && row < rows;
+}
+
+function selectRandomEdges(edges, count) {
+  let validEdges = edges.filter(edge => grid[edge.x][edge.y] === 2); // Ensure edges are still valid for growth
+  let shuffled = shuffle(validEdges);
+  //let shuffled = shuffle(edges);
+  return shuffled.slice(0, count);
+}
+
+// Shuffle array in-place and return it
+function shuffle(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    let j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
+function connectBtnClick() {
+  if (!port.opened()) {
+    // looks only for Adafruit devices
+    port.open(57600);
+  } else {
+    port.close();
+  }
+}
+
+function adjustSpeedLight(data){
+  let newSpeedLight = map(data, 0, 350, 1, 60); // Example mapping, adjust as necessary
+  //frameRate(newFrameRate);
+  speedLight = int(newSpeedLight);
+}
+
+function moveFood(direction) {
+  //console.log("Tilt direction received:", direction);  // For now, just log the tilt direction
+  //console.log("Raw Tilt direction received: [" + direction + "]");  // Display the raw direction with brackets to check for whitespace or other invisible characters
+
+  direction = direction.trim();  // Ensure to trim whitespace around the direction
+  console.log("Trimmed Tilt direction: [" + direction + "]");  // Display the trimmed direction
+  // Here, add any functionality to move the food source based on the tilt direction
+  let prevX = foodSource.x;
+  let prevY = foodSource.y;
+
+  switch(direction) {
+    case 'UP':
+      console.log(`Attempting to move UP from y=${foodSource.y}`);
+      if (foodSource.y > 0) foodSource.y -= 1;
+      break;
+    case 'DOWN':
+      if (foodSource.y < rows - 1) foodSource.y += 1;
+      break;
+    case 'LEFT':
+      if (foodSource.x > 0) foodSource.x -= 1;
+      break;
+    case 'RIGHT':
+      if (foodSource.x < cols - 1) foodSource.x += 1;
+      break;
+      //debug
+      default:
+      console.log("Invalid direction received:", direction);
+      break;
+  }
+
+  // Update the grid to reflect movement
+  if (prevX !== foodSource.x || prevY !== foodSource.y){
+    console.log(`Food source moved from (${prevX}, ${prevY}) to (${foodSource.x}, ${foodSource.y})`);
+    grid[prevX][prevY] = 0; // Clear the previous location
+    grid[foodSource.x][foodSource.y] = 3; // Assuming 3 represents food source
+  }else {
+        console.log(`No movement: (${prevX}, ${prevY}) remains`);
+    }
+}
+
+function placeFood(){
+  placedFoodSources.push({ x: foodSource.x, y: foodSource.y });  // Add current position to placed food sources
+  // Draw placed food sources
+    /*for (let source of placedFoodSources) {
+        fill('#FF5722');  // Use a different shade of green for placed food sources
+        rect(source.x * rectSize, source.y * rectSize, rectSize, rectSize);
+    }*/
+}
+
+function deployMoldImages() {
+    potentialGrowthEdges.forEach(edge => {
+        if (grid[edge.x][edge.y] === 1 || grid[edge.x][edge.y] === 2) {
+            let img = random(moldImages); // Pick a random image
+            imageOverlay[edge.x][edge.y] = img; // Assign the image to the overlay
+          console.log('toomuchwater')
+        }
+    });
+}
+
+
+function inData(){
+  
+  let rawData = port.readUntil("\n").trim();
+  console.log("Received Raw Data:", rawData);  // Log all received dat
+  
+  if (rawData.length > 0){
+    if (rawData === 'Place_Food'){
+      console.log('Place Food received');
+      placeFood();
+    }else if(rawData ==="Water"){
+      deployMoldImages();
+             
+    }else if(rawData === "waterone"){
+      lastWateroneTime = millis(); // Reset the timer on receiving "waterone"
+      //fadingStarted = false; // Reset fading
+    }
+    else{
+    let dataParts = rawData.split(',');  // Split the incoming data string into parts using the comma as a delimiter
+      let dataType = dataParts[0];  // The first part indicates the type of data: 'L' for light, 'T' for tilt
+      let dataValue = dataParts[1];  // The second part is the actual value
+    if (dataType === 'L'){
+      let intLight = int(dataValue);
+      if (intLight){
+        if (intLight.length > 0) {
+          console.log(intLight);
+        }
+        adjustSpeedLight(intLight);
+      }
+    }else if (dataType === 'T'){
+      moveFood(dataValue);
+    }
+  }
+  }
+}
